@@ -1,0 +1,3 @@
+{parse} = import "./src/lib.spwn"
+let output = parse($.readfile("sample.mid", "bin"))
+$.print(output.tracks.map(tr => tr.events))

@@ -1,0 +1,270 @@
+controller = import "controller.spwn"
+util = import "./util.spwn"
+parse_event = (bytes) {
+    let skip = 0
+    let delta_time_binary = ""
+    let cont_bit = @bitwise::to_binary(bytes[skip])[0]
+    if (cont_bit == "0") {
+        delta_time_binary += @bitwise::to_binary(bytes[skip]).split("")[1:8].join("")
+        skip += 1
+    }
+    while cont_bit == "1" {
+        cont_bit = @bitwise::to_binary(bytes[skip])[0]
+        delta_time_binary += @bitwise::to_binary(bytes[skip]).split("")[1:8].join("")
+        skip += 1
+    }
+    let delta_time = @bitwise::from_binary(delta_time_binary)
+    // META EVENT
+    if (bytes[skip] == 0xf0) {throw "SysEx events are not supported"}
+    if (bytes[skip] == 0xff) {
+        let typ = bytes[skip + 1]
+        if (typ != 127) {
+            let length_bin = ""
+            let cont_bit1 = @bitwise::to_binary(bytes[skip + 2])[0]
+            if (cont_bit1 == "0") {
+                length_bin += @bitwise::to_binary(bytes[skip + 2]).split("")[1:8].join("")
+                skip += 3
+            }
+            while cont_bit1 == "1" {
+                cont_bit1 = @bitwise::to_binary(bytes[skip])[0]
+                length_bin += @bitwise::to_binary(bytes[skip]).split("")[1:8].join("")
+                skip += 1
+            }
+            let length = @bitwise::from_binary(length_bin)
+            return {
+                skip: skip + length,
+                event: match typ {
+                    ==0: {
+                        event_type: typ, 
+                        typ: "sequence_number",
+                        delta_time,
+                        meta: true,
+                        msb: bytes[skip],
+                        lsb: bytes[skip + 1]
+                    },
+                    ==1: {
+                        event_type: typ,
+                        typ: "text",
+                        delta_time,
+                        meta: true,
+                        // bytes[skip + local_skip:skip + local_skip + length]
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==2: {
+                        event_type: typ,
+                        typ: "copyright_notice",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==3: {
+                        event_type: typ,
+                        typ: "track_name",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==4: {
+                        event_type: typ,
+                        typ: "instrument_name",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==5: {
+                        event_type: typ,
+                        typ: "lyric",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==6: {
+                        event_type: typ,
+                        typ: "marker",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==7: {
+                        event_type: typ,
+                        typ: "cue_point",
+                        delta_time,
+                        meta: true,
+                        text: util.bytes_to_string(bytes[skip:skip + length])
+                    },
+                    ==32: {
+                        event_type: typ,
+                        typ: "midi_channel_prefix",
+                        delta_time,
+                        meta: true,
+                        channel: bytes[skip]
+                    },
+                    ==47: {
+                        event_type: typ,
+                        typ: "end_of_track",
+                        delta_time,
+                        meta: true
+                    },
+                    ==81: {
+                        event_type: typ,
+                        typ: "set_tempo",
+                        delta_time,
+                        meta: true,
+                        microseconds: util.combine_bytes(bytes[skip:skip + length]),
+                    },
+                    ==84: {
+                        event_type: typ,
+                        typ: "smpte_offset",
+                        delta_time,
+                        meta: true,
+                        hour: bytes[skip],
+                        min: bytes[skip + 1],
+                        sec: bytes[skip + 2],
+                        fr: bytes[skip + 3],
+                        subfr: bytes[skip + 4]
+                    },
+                    ==88: {
+                        event_type: typ,
+                        typ: "time_signature",
+                        delta_time,
+                        meta: true,
+                        numer: bytes[skip],
+                        denom: bytes[skip + 1],
+                        metro: bytes[skip + 2], 
+                        _32nds: bytes[skip + 3]
+                    },
+                    ==89: {
+                        event_type: typ,
+                        typ: "key_signature",
+                        delta_time,
+                        meta: true,
+                        key: bytes[skip],
+                        scale: bytes[skip + 1]
+                    },
+                }
+            }
+        } else {
+            let data = []
+            let cont_bit1 = @bitwise::to_binary(bytes[skip + 2])[0]
+            if (cont_bit1 == "0") {
+                data.push(@bitwise::from_binary(@bitwise::to_binary(bytes[skip + 2]).split("")[1:8].join("")))
+                skip += 3
+            }
+            while cont_bit1 == "1" {
+                cont_bit1 = @bitwise::to_binary(bytes[skip])[0]
+                data.push(@bitwise::from_binary(@bitwise::to_binary(bytes[skip]).split("")[1:8].join("")))
+                skip += 3
+            }
+            length = data.length
+            return {
+                skip: skip + length + 2,
+                event: {
+                    event_type: typ,
+                    typ: "sequencer_specific",
+                    delta_time,
+                    meta: true,
+                    data
+                }
+            }
+        }
+    } else {
+        let bits = @bitwise::to_binary(bytes[skip]).split("")
+        let event_type = @bitwise::from_binary(bits[0:4].join(""))
+        let midi_channel = @bitwise::from_binary(bits[4:8].join(""))
+        let parameter1 = bytes[skip + 1]
+        if ([0x8, 0x9, 0xa, 0xb, 0xe].contains(event_type)) {
+            let parameter2 = bytes[skip + 2]
+            return {
+                skip: skip + 3,
+                stop: false,
+                event: match event_type {
+                    ==0x8: {
+                        event_type,
+                        midi_channel, 
+                        delta_time,
+                        meta: false,
+                        typ: "note_off",
+                        note: parameter1,
+                        velocity: parameter2
+                    },
+                    ==0x9: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "note_on",
+                        note: parameter1,
+                        velocity: parameter2
+                    },
+                    ==0xa: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "note_aftertouch",
+                        note: parameter1,
+                        amount: parameter2
+                    },
+                    ==0xb: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "controller",
+                        controller_type: controller.parse_controller_type(parameter1),
+                        parameter1, // idk someone might need it ig
+                        value: parameter2
+                    },
+                    ==0xe: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "pitch_bend_event",
+                        value_lsb: parameter1,
+                        value_msb: parameter2
+                    },
+                    else: (){
+                        throw "Invalid midi file"
+                    }()
+                }
+            }
+        } else {
+            return {
+                skip: skip + 2, 
+                stop: false,
+                event: match event_type {
+                    ==0xc: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "program_change",
+                        program_number: parameter1
+                    },
+                    ==0xd: {
+                        event_type,
+                        midi_channel,
+                        delta_time,
+                        meta: false,
+                        typ: "channel_aftertouch",
+                        amount: parameter1
+                    },
+                    // else: {
+                    //     event_type, 
+                    //     midi_channel,
+                    //     delta_time,
+                    //     meta: false,
+                    //     typ: "unknown",
+                    //     val: parameter1
+                    // }
+                    else: (){
+                        throw "Invalid midi file"
+                    }()
+                }
+            }
+        }
+    }
+}
+
+return {parse_event}

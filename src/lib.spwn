@@ -1,0 +1,149 @@
+util = import "./util.spwn"
+controller = import "./controller.spwn"
+{parse_event} = import "./event.spwn"
+
+decode_time_division = (time_division) {
+    let bit = @bitwise::to_binary(time_division)
+    return {
+        typ: "tpb",
+        tpqn: time_division
+    } if time_division >= 0 else {
+        typ: "smpte",
+        frames: @bitwise::from_binary(bit.split("")[1:8].join("")) if @bitwise::from_binary(bit.split("")[1:8].join("")) != 29 else 29.97,
+        ticks: @bitwise::from_binary(bit.split("")[8:16].join(""))
+    }
+}
+
+parse_events = (bytes, td, prbpm) {
+    let skip = 0
+    let timeline = []
+    let notes = [[], []]
+    let bpm = prbpm if prbpm != null else 120
+    let time_division = decode_time_division(td)
+    let tick_ms = 60000 / (bpm * time_division.tpqn) if time_division.typ == "tpb" else (time_division.frames * time_division.ticks) / 1000
+    let shift = 0
+    while true {
+        if (skip == bytes.length || bytes[skip:bytes.length].length == 0) {break}
+        let ev = parse_event(bytes[skip:bytes.length])
+        skip += ev.skip
+
+        let event = ev.event
+
+        if (event.typ == "unknown") {continue}
+        shift += (event.delta_time * tick_ms) / 1000
+        if (event.meta) {
+            match event.event_type {
+                ==81: (){
+                    bpm = 60000000 / event.microseconds
+                    tick_ms = 60000 / (bpm * time_division.tpqn) if time_division.typ == "tpb" else (time_division.frames * time_division.ticks) / 1000
+                }(),
+                ==84: (){
+                    let h_bin = @bitwise::to_binary(event.hour).split("")
+                    let frame_rate_bin = h_bin[1:3].join("")
+                    let hour = @bitwise::from_binary(h_bin[3:8].join(""))
+                    let frame_rate = match frame_rate_bin {
+                        =="00": 24,
+                        =="01": 25,
+                        =="10": 29.97,
+                        =="11": 30
+                    }
+                    // in seconds
+                    shift += hour * 3600 + event.min * 60 + event.sec + (event.fr / frame_rate) + ((event.subfr / 99) / frame_rate)
+                }(),
+                else: (){
+                    timeline.push({
+                        time: shift,
+                        event: event
+                    })
+                }()
+            }
+        } else {
+            if (event.event_type == 0x8) {
+                let i = notes[0].index(event.note)
+                let note = notes[1][i] 
+                notes[0] = [notes[0][j] if j != i else null for j in 0..notes[0].length].filter(el => el != null)
+                notes[1] = [notes[1][j] if j != i else null for j in 0..notes[1].length].filter(el => el != null)
+
+                timeline.push({
+                    time: note.time,
+                    duration: shift - note.time,
+                    note: note.note,
+                    velocity: note.velocity,
+                    midi_channel: note.midi_channel,
+                })
+            } else if (event.event_type == 0x9) {
+                if (event.velocity == 0 && notes[0].contains(event.note)) {
+                    let i = notes[0].index(event.note)
+                    let note = notes[1][i]
+                    notes[0] = [notes[0][j] if j != i else null for j in 0..notes[0].length].filter(el => el != null)
+                    notes[1] = [notes[1][j] if j != i else null for j in 0..notes[1].length].filter(el => el != null)
+
+                    timeline.push({
+                        time: note.time,
+                        duration: shift - note.time,
+                        note: note.note,
+                        velocity: note.velocity,
+                        midi_channel: note.midi_channel,
+                    })
+                } else {
+                    notes[0].push(event.note)
+                    notes[1].push({
+                        note: event.note,
+                        time: shift,
+                        velocity: event.velocity,
+                        midi_channel: event.midi_channel
+                    })
+                }
+            } else {
+                timeline.push({
+                    time: shift,
+                    event: event
+                })
+            }
+        }
+
+        if (ev.event.typ == "end_of_track") {break}
+    }
+    return {timeline, bpm}
+}
+
+parse = (bytes) {
+    let header = {
+        chunk_id: bytes[0:4],
+        chunk_size: util.combine_bytes(bytes[4:8]), 
+        typ: util.combine_bytes(bytes[8:10]),
+        tracks: util.combine_bytes(bytes[10:12]), 
+        time_division: util.combine_bytes(bytes[12:14])
+    }
+    if (util.bytes_to_string(header.chunk_id) != "MThd") {throw "Invalid MIDI file."}
+    if (header.chunk_size != 6) {throw "Invalid MIDI file."}
+    if (header.typ == 0 && header.tracks != 1) {throw "Invalid MIDI file."}
+    if (header.typ == 2) {throw "Type 2 MIDI files are not supported"}
+    let tracks = []
+    let skip = 14
+    for i in 0..header.tracks {
+        let chunk_id = bytes[skip:(skip+4)]
+        let chunk_size = util.combine_bytes(bytes[(skip+4):(skip+8)])
+        if (util.bytes_to_string(chunk_id) != "MTrk") {throw "Invalid MIDI file."}
+
+        let events = parse_events(bytes[(skip+8):(skip+8+chunk_size)], header.time_division, tracks[0].bpm if tracks.length > 0 else null)
+
+        tracks.push({
+            chunk_size, 
+            events: events.timeline,
+            bpm: events.bpm
+        })
+        skip += (8 + chunk_size)
+    }
+    return {
+        midi_type: header.typ,
+        tracks,
+        time_division: header.time_division,
+        _raw: {
+            header,
+            tracks
+        }
+    }
+}
+
+return {parse}

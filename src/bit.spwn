@@ -1,0 +1,92 @@
+extract $
+type @bitwise
+impl @bitwise {
+    to_binary: (n: @number, fill_to: @number = 8) {
+        let int = n    
+        if (fract(int) != 0) {
+            int -= fract(int)
+        }
+        let div = int / 2
+        let quotient = div - fract(div)
+        let remainder = 0
+        if (fract(div) > 0) {
+            remainder = 1
+        }
+        let res = "{}".fmt(remainder)
+        while quotient > 0 {
+            div = quotient / 2
+            quotient = div - fract(div)
+            remainder = 0
+            if (fract(div) > 0) {
+                remainder = 1
+            }
+            res+="{}".fmt(remainder)
+        }
+        res = res.reverse()
+        if (res.length < fill_to && fill_to != 0) {
+            res = "{}{}".fmt(["0" * (fill_to - res.length), res])
+        }
+        return res
+    },
+    from_binary: (string: @string) {
+        let res = 0
+        for i in 0..string.length {
+            res+=(2^i)*(string.reverse()[i] as @number)
+        }
+        return res
+    },
+    or: (number: @number, number2: @number) {
+        let str = @bitwise::to_binary(number, 0)
+        let str2 = @bitwise::to_binary(number2, 0)
+        let res = ""
+        if (str.length < str2.length) {
+            let tmp = "{}{}".fmt([("0" * (str2.length - str.length)), str])
+            str = tmp
+        } else if (str.length > str2.length) {
+            let tmp = "{}{}".fmt([("0" * (str.length - str2.length)), str2])
+            str2 = tmp
+        }
+        for i in 0..str.length {
+            let c1 = str[i]
+            let c2 = str2[i]
+            res += "1" if c1 == "1" || c2 == "1" else "0"
+        }
+        return @bitwise::from_binary(res)
+    },
+    and: (number: @number, number2: @number) {
+        let str = @bitwise::to_binary(number, 0)
+        let str2 = @bitwise::to_binary(number2, 0)
+        let res = ""
+        if (str.length < str2.length) {
+            let tmp = "{}{}".fmt([("0" * (str2.length - str.length)), str])
+            str = tmp
+        } else if (str.length > str2.length) {
+            let tmp = "{}{}".fmt([("0" * (str.length - str2.length)), str2])
+            str2 = tmp
+        }
+        for i in 0..str.length {
+            let c1 = str[i]
+            let c2 = str2[i]
+            res += "1" if c1 == "1" && c2 == "1" else "0"
+        }
+        return @bitwise::from_binary(res)
+    },
+    not: (number: @number) {
+        let str = @bitwise::to_binary(number, 0)
+        let res = ""
+        for i in str {
+            res += "1" if i == "0" else "0"
+        }
+        return @bitwise::from_binary(res)
+    },
+    left_shift: (number: @number, amount: @number = 1) {
+        let str = @bitwise::to_binary(number, 0)
+        if (amount < 0) {amount = -amount}
+        return @bitwise::from_binary("{}{}".fmt([str, "0" * amount]))
+    },
+    right_shift: (number: @number, amount: @number = 1) {
+        let str = @bitwise::to_binary(number, 0)
+        if (amount < 0) {amount = -amount}
+        return @bitwise::from_binary("{}{}".fmt(["0" * amount, str.substr(0, str.length - amount)]))
+    }
+}
